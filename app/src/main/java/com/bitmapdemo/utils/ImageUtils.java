@@ -14,6 +14,10 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 创建者     yangyanfei
@@ -36,6 +40,12 @@ public class ImageUtils {
 
     private static Handler mHandler;
 
+    //声明线程池,全局只有一个线程池,所有访问网络图片，只有这个池子去访问。
+    private static ExecutorService mPool;
+
+    //解决错位问题，定义一个存标记的集合
+    private Map<ImageView, String> mTags = new LinkedHashMap<ImageView, String>();
+
     public ImageUtils(Context context) {
         this.mContext = context;
         if (mCaches == null) {
@@ -56,6 +66,15 @@ public class ImageUtils {
         if (mHandler == null) {
             //实例化Handler
             mHandler = new Handler();
+        }
+
+        if (mPool == null) {
+            //创建固定大小的线程池
+            mPool = Executors.newFixedThreadPool(3);
+            //创建一个缓存的线程池,生产者和消费者，一个线程生产，必须得消费完成后再生产
+            /*Executors.newCachedThreadPool();
+            Executors.newSingleThreadExecutor();//创建一个单线程池
+            Executors.newScheduledThreadPool();//创建一个计划的任务池*/
         }
     }
 
@@ -87,8 +106,16 @@ public class ImageUtils {
     }
 
     private void loadFromNet(ImageView iv, String url) {
+
+        mTags.put(iv, url);//url是ImageView最新的地址
+
         //耗时操作
-        new Thread(new LoadImageTask(iv, url)).start();
+        //        new Thread(new LoadImageTask(iv, url)).start();
+        //用线程池去管理
+        mPool.execute(new LoadImageTask(iv, url));
+        //        Future<?> submit = mPool.submit(new LoadImageTask(iv, url));
+        //取消的操作（有机率取消）,而使用execute没有办法取消
+        //        submit.cancel(true);
     }
 
     private class LoadImageTask implements Runnable {
@@ -124,13 +151,21 @@ public class ImageUtils {
                 //存储到内存
                 mCaches.put(url, bitmap);
 
-                //显示到UI,当前是子线程,需要使用Handler。其中post方法是执行在主线程的
-                mHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        display(iv,url);
-                    }
-                });
+                //在显示UI之前，拿到最新的url地址
+                String recentlyUrl = mTags.get(iv);
+
+                //把这个url和最新的url地址做一个比对，如果相同，就显示ui
+                if (url.equals(recentlyUrl)) {
+                    //显示到UI,当前是子线程,需要使用Handler。其中post方法是执行在主线程的
+                    mHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            display(iv, url);
+                        }
+                    });
+                }
+
+
             } catch (Exception e) {
                 e.printStackTrace();
             }
